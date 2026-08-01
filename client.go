@@ -103,7 +103,6 @@ func NewClient(options ClientOptions) (*Client, error) {
 	quicConfig := &quic.Config{
 		DisablePathMTUDiscovery: !(runtime.GOOS == "windows" || runtime.GOOS == "linux" || runtime.GOOS == "android" || runtime.GOOS == "darwin"),
 		EnableDatagrams:         !options.UDPOverStream,
-		MaxIncomingUniStreams:   1 << 60,
 	}
 	client := &Client{
 		ctx:               options.Context,
