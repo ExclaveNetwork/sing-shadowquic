@@ -37,8 +37,6 @@ const betaLastMax float32 = 0.85
 
 // Cubic implements the cubic algorithm from TCP
 type Cubic struct {
-	clock Clock
-
 	// Number of connections to simulate.
 	numConnections int
 
@@ -67,9 +65,8 @@ type Cubic struct {
 }
 
 // NewCubic returns a new Cubic instance
-func NewCubic(clock Clock) *Cubic {
+func NewCubic() *Cubic {
 	c := &Cubic{
-		clock:          clock,
 		numConnections: defaultNumConnections,
 	}
 	c.Reset()
@@ -187,7 +184,7 @@ func (c *Cubic) CongestionWindowAfterAck(
 		targetCongestionWindow = c.originPointCongestionWindow - deltaCongestionWindow
 	}
 	// Limit the CWND increase to half the acked bytes.
-	targetCongestionWindow = Min(targetCongestionWindow, currentCongestionWindow+c.ackedBytesCount/2)
+	targetCongestionWindow = min(targetCongestionWindow, currentCongestionWindow+c.ackedBytesCount/2)
 
 	// Increase the window by approximately Alpha * 1 MSS of bytes every
 	// time we ack an estimated tcp window of bytes.  For small

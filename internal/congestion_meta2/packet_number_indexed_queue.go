@@ -74,7 +74,7 @@ func (p *packetNumberIndexedQueue[T]) Emplace(packetNumber congestion.PacketNumb
 	// Handle potentially missing elements.
 	offset := int(packetNumber - p.FirstPacket())
 	if gap := offset - p.entries.Len(); gap > 0 {
-		for i := 0; i < gap; i++ {
+		for range gap {
 			p.entries.PushBack(entryWrapper[T]{})
 		}
 	}
@@ -150,7 +150,7 @@ func (p *packetNumberIndexedQueue[T]) EntrySlotsUsed() int {
 	return p.entries.Len()
 }
 
-// LastPacket returns packet number of the first entry in the queue.
+// FirstPacket returns packet number of the first entry in the queue.
 func (p *packetNumberIndexedQueue[T]) FirstPacket() (packetNumber congestion.PacketNumber) {
 	return p.firstPacket
 }

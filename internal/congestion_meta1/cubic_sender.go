@@ -26,7 +26,6 @@ type cubicSender struct {
 	rttStats        congestion.RTTStatsProvider
 	cubic           *Cubic
 	pacer           *pacer
-	clock           Clock
 
 	reno bool
 
@@ -64,12 +63,10 @@ var _ congestion.CongestionControl = &cubicSender{}
 
 // NewCubicSender makes a new cubic sender
 func NewCubicSender(
-	clock Clock,
 	initialMaxDatagramSize congestion.ByteCount,
 	reno bool,
 ) *cubicSender {
 	return newCubicSender(
-		clock,
 		reno,
 		initialMaxDatagramSize,
 		initialCongestionWindow*initialMaxDatagramSize,
@@ -78,7 +75,6 @@ func NewCubicSender(
 }
 
 func newCubicSender(
-	clock Clock,
 	reno bool,
 	initialMaxDatagramSize,
 	initialCongestionWindow,
@@ -92,8 +88,7 @@ func newCubicSender(
 		initialMaxCongestionWindow: initialMaxCongestionWindow,
 		congestionWindow:           initialCongestionWindow,
 		slowStartThreshold:         MaxByteCount,
-		cubic:                      NewCubic(clock),
-		clock:                      clock,
+		cubic:                      NewCubic(),
 		reno:                       reno,
 		maxDatagramSize:            initialMaxDatagramSize,
 	}
@@ -167,7 +162,7 @@ func (c *cubicSender) OnPacketAcked(
 	priorInFlight congestion.ByteCount,
 	eventTime monotime.Time,
 ) {
-	c.largestAckedPacketNumber = Max(ackedPacketNumber, c.largestAckedPacketNumber)
+	c.largestAckedPacketNumber = max(ackedPacketNumber, c.largestAckedPacketNumber)
 	if c.InRecovery() {
 		return
 	}
@@ -231,7 +226,7 @@ func (c *cubicSender) maybeIncreaseCwnd(
 			c.numAckedPackets = 0
 		}
 	} else {
-		c.congestionWindow = Min(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
+		c.congestionWindow = min(c.maxCongestionWindow(), c.cubic.CongestionWindowAfterAck(ackedBytes, c.congestionWindow, c.rttStats.MinRTT(), eventTime))
 	}
 }
 

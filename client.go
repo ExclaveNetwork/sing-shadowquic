@@ -232,7 +232,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		udpConn.Close()
 		return nil, err
 	}
-	setCongestion(c.ctx, quicConn, c.congestionControl)
+	setCongestion(quicConn, c.congestionControl)
 	conn := &clientQUICConnection{
 		quicConn:   quicConn,
 		rawConn:    udpConn,
