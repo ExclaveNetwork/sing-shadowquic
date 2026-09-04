@@ -259,6 +259,17 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	return conn, nil
 }
 
+type keepSessionKey struct{}
+
+func ContextWithKeepSession(ctx context.Context) context.Context {
+	return context.WithValue(ctx, (*keepSessionKey)(nil), true)
+}
+
+func KeepSessionFromContext(ctx context.Context) bool {
+	keep, _ := ctx.Value((*keepSessionKey)(nil)).(bool)
+	return keep
+}
+
 func (c *Client) DialConn(ctx context.Context, destination metadata.Socksaddr) (net.Conn, error) {
 	quicConn, err := c.offer(ctx)
 	if err != nil {
@@ -270,13 +281,14 @@ func (c *Client) DialConn(ctx context.Context, destination metadata.Socksaddr) (
 	}
 	stream, err := quicConn.quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		quicConn.releaseStream()
+		quicConn.releaseStream(false)
 		return nil, err
 	}
 	return &clientConn{
 		Stream:      stream,
 		parent:      quicConn,
 		destination: destination,
+		keepSession: KeepSessionFromContext(ctx),
 	}, nil
 }
 
@@ -291,7 +303,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	}
 	control, err := quicConn.quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		quicConn.releaseStream()
+		quicConn.releaseStream(false)
 		return nil, err
 	}
 	return newClientPacketConn(ctx, quicConn, control, c.udpOverStream), nil
@@ -384,10 +396,10 @@ func (c *clientQUICConnection) acquireStream() error {
 	return nil
 }
 
-func (c *clientQUICConnection) releaseStream() {
+func (c *clientQUICConnection) releaseStream(keepSession bool) {
 	c.access.Lock()
 	c.streams--
-	drained := c.closeIdle.Load() && c.streams == 0
+	drained := c.closeIdle.Load() && !keepSession && c.streams == 0
 	c.access.Unlock()
 	if drained {
 		c.close()
@@ -407,6 +419,7 @@ type clientConn struct {
 	parent        *clientQUICConnection
 	destination   metadata.Socksaddr
 	headerWritten bool
+	keepSession   bool
 	closeOnce     sync.Once
 }
 
@@ -446,7 +459,7 @@ func (c *clientConn) Close() error {
 	c.Stream.CancelRead(0)
 	err := c.Stream.Close()
 	c.Stream.SetWriteDeadline(time.Now())
-	c.closeOnce.Do(c.parent.releaseStream)
+	c.closeOnce.Do(func() { c.parent.releaseStream(c.keepSession) })
 	return err
 }
 
@@ -485,12 +498,13 @@ func (c *Client) DialCustomCommandConn(ctx context.Context) (net.Conn, error) {
 	}
 	stream, err := quicConn.quicConn.OpenStreamSync(ctx)
 	if err != nil {
-		quicConn.releaseStream()
+		quicConn.releaseStream(false)
 		return nil, err
 	}
 	clientConn := &clientConn{
-		Stream: stream,
-		parent: quicConn,
+		Stream:      stream,
+		parent:      quicConn,
+		keepSession: KeepSessionFromContext(ctx),
 	}
 	clientConn.headerWritten = true
 	return clientConn, nil
