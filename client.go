@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"io"
 	"net"
+	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	quic "github.com/metacubex/jls-quic-go"
@@ -48,6 +50,7 @@ type Client struct {
 
 	connAccess sync.Mutex
 	conn       *clientQUICConnection
+	closeIdle  atomic.Bool
 	pending    *clientOffer
 }
 
@@ -237,6 +240,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 		quicConn:   quicConn,
 		rawConn:    udpConn,
 		connDone:   make(chan struct{}),
+		closeIdle:  &c.closeIdle,
 		sendIDs:    make(map[uint16]struct{}),
 		receiveIDs: make(map[uint16]*controlMessage),
 	}
@@ -260,8 +264,13 @@ func (c *Client) DialConn(ctx context.Context, destination metadata.Socksaddr) (
 	if err != nil {
 		return nil, err
 	}
+	err = quicConn.acquireStream()
+	if err != nil {
+		return nil, err
+	}
 	stream, err := quicConn.quicConn.OpenStreamSync(ctx)
 	if err != nil {
+		quicConn.releaseStream()
 		return nil, err
 	}
 	return &clientConn{
@@ -276,8 +285,13 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = quicConn.acquireStream()
+	if err != nil {
+		return nil, err
+	}
 	control, err := quicConn.quicConn.OpenStreamSync(ctx)
 	if err != nil {
+		quicConn.releaseStream()
 		return nil, err
 	}
 	return newClientPacketConn(ctx, quicConn, control, c.udpOverStream), nil
@@ -301,6 +315,28 @@ func (c *Client) Close() error {
 	return nil
 }
 
+func (c *Client) SetKeepIdleConnections(keep bool) {
+	c.closeIdle.Store(!keep)
+	if !keep {
+		c.CloseIdleConnections()
+	}
+}
+
+func (c *Client) CloseIdleConnections() {
+	c.connAccess.Lock()
+	conn := c.conn
+	c.connAccess.Unlock()
+	if conn == nil {
+		return
+	}
+	conn.access.Lock()
+	drained := conn.streams == 0
+	conn.access.Unlock()
+	if drained {
+		conn.close()
+	}
+}
+
 type clientOffer struct {
 	done      chan struct{}
 	cancel    func()
@@ -315,6 +351,9 @@ type clientQUICConnection struct {
 	rawConn   io.Closer
 	closeOnce sync.Once
 	connDone  chan struct{}
+
+	streams   int
+	closeIdle *atomic.Bool
 
 	access     sync.Mutex
 	sendID     uint16
@@ -333,6 +372,28 @@ func (c *clientQUICConnection) active() bool {
 	}
 }
 
+func (c *clientQUICConnection) acquireStream() error {
+	c.access.Lock()
+	select {
+	case <-c.connDone:
+		return exceptions.Errors(os.ErrClosed)
+	default:
+	}
+	c.streams++
+	c.access.Unlock()
+	return nil
+}
+
+func (c *clientQUICConnection) releaseStream() {
+	c.access.Lock()
+	c.streams--
+	drained := c.closeIdle.Load() && c.streams == 0
+	c.access.Unlock()
+	if drained {
+		c.close()
+	}
+}
+
 func (c *clientQUICConnection) close() {
 	c.closeOnce.Do(func() {
 		close(c.connDone)
@@ -346,6 +407,7 @@ type clientConn struct {
 	parent        *clientQUICConnection
 	destination   metadata.Socksaddr
 	headerWritten bool
+	closeOnce     sync.Once
 }
 
 var (
@@ -384,6 +446,7 @@ func (c *clientConn) Close() error {
 	c.Stream.CancelRead(0)
 	err := c.Stream.Close()
 	c.Stream.SetWriteDeadline(time.Now())
+	c.closeOnce.Do(c.parent.releaseStream)
 	return err
 }
 
@@ -398,7 +461,6 @@ func (c *clientConn) RemoteAddr() net.Addr {
 func (c *Client) sunnyQUICHandshake(ctx context.Context, quicConn *quic.Conn) error {
 	stream, err := quicConn.OpenStreamSync(ctx)
 	if err != nil {
-
 		return err
 	}
 	request := buf.NewSize(1 + 64)
@@ -413,17 +475,22 @@ func (c *Client) sunnyQUICHandshake(ctx context.Context, quicConn *quic.Conn) er
 }
 
 func (c *Client) DialCustomCommandConn(ctx context.Context) (net.Conn, error) {
-	conn, err := c.offer(ctx)
+	quicConn, err := c.offer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := conn.quicConn.OpenStreamSync(ctx)
+	err = quicConn.acquireStream()
 	if err != nil {
+		return nil, err
+	}
+	stream, err := quicConn.quicConn.OpenStreamSync(ctx)
+	if err != nil {
+		quicConn.releaseStream()
 		return nil, err
 	}
 	clientConn := &clientConn{
 		Stream: stream,
-		parent: conn,
+		parent: quicConn,
 	}
 	clientConn.headerWritten = true
 	return clientConn, nil
