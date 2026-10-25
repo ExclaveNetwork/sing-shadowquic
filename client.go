@@ -232,7 +232,7 @@ func (c *Client) completeOffer(pending *clientOffer, offerCtx context.Context) {
 }
 
 func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
-	udpConn, err := c.dialer.DialContext(c.ctx, "udp", c.serverAddr)
+	udpConn, err := c.dialer.DialContext(ctx, "udp", c.serverAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (c *Client) offerNew(ctx context.Context) (*clientQUICConnection, error) {
 	}
 	if c.sunnyQUIC {
 		go func() {
-			if hErr := c.sunnyQUICHandshake(c.ctx, quicConn); hErr != nil {
+			if hErr := c.sunnyQUICHandshake(ctx, quicConn); hErr != nil {
 				conn.close()
 			}
 		}()
@@ -309,7 +309,7 @@ func (c *Client) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		quicConn.releaseStream(false)
 		return nil, err
 	}
-	return newClientPacketConn(ctx, quicConn, control, c.udpOverStream), nil
+	return newClientPacketConn(c.ctx, quicConn, control, c.udpOverStream), nil
 }
 
 func (c *Client) Close() error {
